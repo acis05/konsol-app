@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Konsolidasi LK PDF • Mini App</title>
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --panel:#0f1620;
+      --panel2:#0c121a;
+      --text:#e6edf3;
+      --muted:#9aa4af;
+      --line:#1b2633;
+      --orange:#ff7a18;
+      --orange2:#ff9b4a;
+      --ok:#2bd576;
+      --warn:#ffcc66;
+      --bad:#ff5c5c;
+      --shadow: 0 16px 48px rgba(0,0,0,.45);
+      --radius: 16px;
+      --radius2: 22px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background: radial-gradient(1200px 600px at 20% -10%, rgba(255,122,24,.12), transparent 55%),
+                  radial-gradient(900px 500px at 85% 10%, rgba(255,155,74,.09), transparent 60%),
+                  linear-gradient(180deg, var(--bg), #070a0e);
+      color:var(--text);
+    }
+    a{color:inherit}
+    .wrap{
+      max-width:1200px;
+      margin:0 auto;
+      padding:28px 18px 40px;
+    }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      margin-bottom:18px;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    .logo{
+      width:42px;height:42px;border-radius:14px;
+      background: linear-gradient(135deg, rgba(255,122,24,.95), rgba(255,155,74,.55));
+      box-shadow: 0 12px 28px rgba(255,122,24,.18);
+      position:relative;
+    }
+    .logo:after{
+      content:"";
+      position:absolute; inset:9px;
+      border-radius:12px;
+      border:1px solid rgba(10,14,20,.35);
+      background: linear-gradient(180deg, rgba(10,14,20,.35), rgba(10,14,20,.1));
+    }
+    .title h1{
+      margin:0;
+      font-size:18px;
+      letter-spacing:.2px;
+      font-weight:650;
+    }
+    .title p{
+      margin:2px 0 0;
+      color:var(--muted);
+      font-size:12.5px;
+    }
+    .pill{
+      display:flex; align-items:center; gap:10px;
+      padding:10px 12px;
+      border:1px solid rgba(255,122,24,.25);
+      border-radius:999px;
+      background: rgba(255,122,24,.08);
+      color: rgba(255,220,200,.92);
+      font-size:12.5px;
+      white-space:nowrap;
+    }
+    .pill .dot{
+      width:8px;height:8px;border-radius:999px;
+      background:var(--orange);
+      box-shadow: 0 0 0 4px rgba(255,122,24,.12);
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 360px 1fr;
+      gap:16px;
+    }
+    @media (max-width: 980px){
+      .grid{grid-template-columns:1fr}
+    }
+
+    .card{
+      background: linear-gradient(180deg, rgba(15,22,32,.92), rgba(12,18,26,.92));
+      border:1px solid rgba(27,38,51,.85);
+      border-radius: var(--radius2);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card .hd{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:14px 16px;
+      background: linear-gradient(180deg, rgba(255,122,24,.08), rgba(255,122,24,0));
+      border-bottom:1px solid rgba(27,38,51,.85);
+    }
+    .hd .k{
+      display:flex; align-items:center; gap:10px;
+    }
+    .badge{
+      font-size:11px;
+      padding:6px 10px;
+      border-radius:999px;
+      background: rgba(255,122,24,.11);
+      border:1px solid rgba(255,122,24,.24);
+      color: rgba(255,210,185,.95);
+    }
+    .hd h2{
+      margin:0;
+      font-size:14px;
+      font-weight:650;
+      letter-spacing:.2px;
+    }
+    .card .bd{ padding:14px 16px 16px; }
+
+    .steps{
+      display:flex; gap:10px; flex-wrap:wrap;
+      margin-bottom:14px;
+    }
+    .step{
+      flex:1;
+      min-width:180px;
+      border:1px solid rgba(27,38,51,.85);
+      border-radius: 16px;
+      padding:10px 12px;
+      background: rgba(15,22,32,.72);
+      position:relative;
+      overflow:hidden;
+    }
+    .step.active{
+      border-color: rgba(255,122,24,.45);
+      box-shadow: 0 0 0 4px rgba(255,122,24,.10);
+    }
+    .step .n{
+      font-family:var(--mono);
+      font-size:12px;
+      color: rgba(255,155,74,.92);
+    }
+    .step .t{
+      margin-top:2px;
+      font-weight:650;
+      font-size:13px;
+    }
+    .step .s{
+      margin-top:4px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.25;
+    }
+    .step:after{
+      content:"";
+      position:absolute; right:-40px; top:-40px;
+      width:100px;height:100px;border-radius:50%;
+      background: radial-gradient(circle at 30% 30%, rgba(255,122,24,.20), transparent 60%);
+      filter: blur(.2px);
+    }
+
+    .btns{display:flex; gap:10px; flex-wrap:wrap;}
+    button, .btn{
+      appearance:none;
+      border:1px solid rgba(27,38,51,.9);
+      background: rgba(15,22,32,.78);
+      color: var(--text);
+      padding:10px 12px;
+      border-radius: 14px;
+      font-weight:620;
+      font-size:13px;
+      cursor:pointer;
+      transition: transform .06s ease, border-color .15s ease, background .15s ease;
+    }
+    button:hover, .btn:hover{
+      border-color: rgba(255,122,24,.35);
+      background: rgba(255,122,24,.10);
+    }
+    button:active{transform: translateY(1px);}
+    .primary{
+      border-color: rgba(255,122,24,.55);
+      background: linear-gradient(180deg, rgba(255,122,24,.22), rgba(255,122,24,.10));
+      box-shadow: 0 12px 28px rgba(255,122,24,.14);
+    }
+    .ghost{
+      background: transparent;
+    }
+    .danger{
+      border-color: rgba(255,92,92,.45);
+      background: rgba(255,92,92,.08);
+    }
+    .right{margin-left:auto}
+
+    .field{
+      display:flex; flex-direction:column; gap:7px;
+      margin-bottom:12px;
+    }
+    label{
+      font-size:12px;
+      color:var(--muted);
+    }
+    input, select{
+      width:100%;
+      padding:10px 12px;
+      border-radius: 14px;
+      border:1px solid rgba(27,38,51,.95);
+      background: rgba(10,14,20,.55);
+      color: var(--text);
+      outline:none;
+    }
+    input:focus, select:focus{
+      border-color: rgba(255,122,24,.55);
+      box-shadow: 0 0 0 4px rgba(255,122,24,.10);
+    }
+    input[type="file"]{ padding:10px; }
+    .hint{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+
+    .list{
+      display:flex; flex-direction:column; gap:10px;
+      margin-top:12px;
+    }
+    .mini{
+      border:1px solid rgba(27,38,51,.9);
+      border-radius:16px;
+      padding:12px;
+      background: rgba(12,18,26,.65);
+    }
+    .mini .row{
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      margin-bottom:8px;
+    }
+    .mini .row b{font-size:13px}
+    .mini .row span{
+      color:var(--muted); font-size:12px
+    }
+    .mini .meta{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:8px;
+    }
+    .chip{
+      font-size:11.5px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(27,38,51,.9);
+      background: rgba(10,14,20,.38);
+      color: rgba(230,237,243,.9);
+      display:inline-flex; gap:8px; align-items:center;
+    }
+    .chip .k{color:var(--muted)}
+    .chip .v{font-family:var(--mono); color: rgba(255,220,200,.92)}
+    .chip.ok{border-color: rgba(43,213,118,.35); background: rgba(43,213,118,.06)}
+    .chip.warn{border-color: rgba(255,204,102,.35); background: rgba(255,204,102,.06)}
+    .chip.bad{border-color: rgba(255,92,92,.35); background: rgba(255,92,92,.06)}
+
+    .tabs{
+      display:flex; gap:10px; flex-wrap:wrap;
+      margin-bottom:12px;
+    }
+    .tab{
+      padding:8px 10px;
+      border-radius: 12px;
+      border:1px solid rgba(27,38,51,.9);
+      background: rgba(10,14,20,.35);
+      color: var(--muted);
+      font-weight:650;
+      font-size:12px;
+      cursor:pointer;
+      user-select:none;
+    }
+    .tab.active{
+      color: rgba(255,220,200,.95);
+      border-color: rgba(255,122,24,.55);
+      background: rgba(255,122,24,.12);
+    }
+
+    table{
+      width:100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow:hidden;
+      border-radius: 16px;
+      border:1px solid rgba(27,38,51,.85);
+      background: rgba(10,14,20,.25);
+    }
+    th, td{
+      padding:10px 10px;
+      font-size:12.5px;
+      border-bottom:1px solid rgba(27,38,51,.65);
+      vertical-align:top;
+    }
+    th{
+      text-align:left;
+      color: rgba(230,237,243,.92);
+      background: rgba(15,22,32,.72);
+      position:sticky; top:0;
+      z-index:1;
+    }
+    tr:last-child td{border-bottom:none}
+    td.mono{font-family:var(--mono)}
+    td.num{text-align:right; font-family:var(--mono)}
+    .muted{color:var(--muted)}
+    .hr{height:1px;background:rgba(27,38,51,.85); margin:14px 0}
+
+    .toast{
+      position:fixed;
+      right:16px; bottom:16px;
+      max-width:380px;
+      padding:12px 14px;
+      border-radius: 16px;
+      border:1px solid rgba(255,122,24,.28);
+      background: rgba(15,22,32,.92);
+      box-shadow: var(--shadow);
+      display:none;
+    }
+    .toast.show{display:block}
+    .toast b{display:block; font-size:13px; margin-bottom:4px}
+    .toast p{margin:0; color:var(--muted); font-size:12px; line-height:1.35}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div class="title">
+          <h1>Konsolidasi Laporan Keuangan (PDF)</h1>
+          <p>Upload Neraca & Laba/Rugi → Mapping eliminasi per pasangan → Export PDF/Excel</p>
+        </div>
+      </div>
+      <div class="pill"><span class="dot"></span> Tema: Dark • Accent Orange</div>
+    </div>
+
+    <div class="grid">
+      <!-- LEFT: Controls -->
+      <div class="card">
+        <div class="hd">
+          <div class="k">
+            <h2>Kontrol</h2>
+            <span class="badge" id="stepBadge">STEP 1/3</span>
+          </div>
+          <button class="ghost" id="resetBtn">Reset</button>
+        </div>
+
+        <div class="bd">
+          <div class="steps">
+            <div class="step active" id="s1">
+              <div class="n">01</div>
+              <div class="t">Upload</div>
+              <div class="s">Tambah perusahaan, upload PDF Neraca & L/R.</div>
+            </div>
+            <div class="step" id="s2">
+              <div class="n">02</div>
+              <div class="t">Mapping Eliminasi</div>
+              <div class="s">Pair A↔B, map AR/AP, auto jurnal.</div>
+            </div>
+            <div class="step" id="s3">
+              <div class="n">03</div>
+              <div class="t">Hasil & Export</div>
+              <div class="s">Neraca/LR konsol + jurnal, export PDF/Excel.</div>
+            </div>
+          </div>
+
+          <!-- STEP 1 -->
+          <div id="panel1">
+            <div class="field">
+              <label>Nama Perusahaan</label>
+              <input id="companyName" placeholder="Contoh: PT Alpha" />
+            </div>
+            <div class="field">
+              <label>Periode Laporan</label>
+              <input id="period" placeholder="Contoh: Des 2025" />
+            </div>
+            <div class="field">
+              <label>Upload PDF Neraca</label>
+              <input id="bsPdf" type="file" accept="application/pdf" />
+            </div>
+            <div class="field">
+              <label>Upload PDF Laba/Rugi</label>
+              <input id="isPdf" type="file" accept="application/pdf" />
+            </div>
+            <div class="btns">
+              <button class="primary" id="addCompanyBtn">Tambah Perusahaan</button>
+              <button class="ghost right" id="goStep2Btn">Lanjut ke Mapping →</button>
+            </div>
+            <p class="hint" style="margin-top:10px">
+              Parsing akan membaca tabel <span class="muted">Kode Akun • Deskripsi • Nilai</span>.
+              Jika ada akun yang tidak terbaca, nanti muncul di preview untuk dicek.
+            </p>
+
+            <div class="hr"></div>
+            <div class="hint"><b>Daftar Perusahaan</b></div>
+            <div class="list" id="companyList"></div>
+          </div>
+
+          <!-- STEP 2 -->
+          <div id="panel2" style="display:none">
+            <div class="field">
+              <label>Pilih Perusahaan A (AR)</label>
+              <select id="pairA"></select>
+            </div>
+            <div class="field">
+              <label>Pilih Perusahaan B (AP)</label>
+              <select id="pairB"></select>
+            </div>
+
+            <div class="mini">
+              <div class="row">
+                <b>Tambah Mapping AR ↔ AP</b>
+                <span class="muted">per pasangan perusahaan</span>
+              </div>
+              <div class="meta">
+                <div class="field" style="margin:0">
+                  <label>Akun Piutang (A)</label>
+                  <select id="arCode"></select>
+                </div>
+                <div class="field" style="margin:0">
+                  <label>Akun Hutang (B)</label>
+                  <select id="apCode"></select>
+                </div>
+              </div>
+              <div class="btns" style="margin-top:10px">
+                <button class="primary" id="addMapBtn">Add Mapping</button>
+                <button class="ghost" id="uploadMapBtn" title="nanti: upload CSV/Excel mapping">Upload Mapping File</button>
+              </div>
+              <p class="hint" style="margin:10px 0 0">
+                Default eliminasi: <span class="muted">min(|AR|, |AP|)</span>. Selisih ditandai sebagai unreconciled.
+              </p>
+            </div>
+
+            <div class="hr"></div>
+            <div class="hint"><b>Daftar Mapping</b></div>
+            <div class="list" id="mappingList"></div>
+
+            <div class="btns" style="margin-top:12px">
+              <button class="ghost" id="backTo1Btn">← Kembali</button>
+              <button class="primary right" id="goStep3Btn">Jalankan Konsolidasi →</button>
+            </div>
+          </div>
+
+          <!-- STEP 3 -->
+          <div id="panel3" style="display:none">
+            <div class="btns">
+              <button class="ghost" id="backTo2Btn">← Kembali</button>
+              <button class="primary right" id="exportExcelBtn">Export Excel</button>
+              <button class="primary" id="exportPdfBtn">Export PDF</button>
+            </div>
+            <p class="hint" style="margin-top:10px">
+              Di tahap ini nanti backend akan mengirim:
+              <span class="muted">BS_Comparison, IS_Comparison, Jurnal Eliminasi, Unreconciled</span>.
+            </p>
+            <div class="hr"></div>
+            <div class="hint"><b>Status</b></div>
+            <div class="list" id="runStatus"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- RIGHT: Preview & Results -->
+      <div class="card">
+        <div class="hd">
+          <div class="k">
+            <h2>Preview & Hasil</h2>
+            <span class="badge" id="viewBadge">Upload dulu</span>
+          </div>
+          <div class="btns">
+            <button class="ghost" id="mockParseBtn" title="demo UI: generate data contoh tanpa backend">Mock Parse</button>
+          </div>
+        </div>
+
+        <div class="bd">
+          <div class="tabs">
+            <div class="tab active" data-tab="preview">Preview Parsed</div>
+            <div class="tab" data-tab="bs">Neraca Konsol</div>
+            <div class="tab" data-tab="is">Laba/Rugi Konsol</div>
+            <div class="tab" data-tab="je">Jurnal Eliminasi</div>
+          </div>
+
+          <div id="tab-preview">
+            <p class="hint">
+              Setelah upload, preview akan menampilkan beberapa baris akun yang berhasil diparse (kode, nama, nilai).
+            </p>
+            <table id="previewTable">
+              <thead>
+                <tr>
+                  <th>Company</th>
+                  <th>Statement</th>
+                  <th class="mono">Kode Akun</th>
+                  <th>Deskripsi</th>
+                  <th class="num">Nilai</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" class="muted">Belum ada data.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="tab-bs" style="display:none">
+            <table id="bsTable">
+              <thead>
+                <tr>
+                  <th class="mono">Kode Akun</th>
+                  <th>Deskripsi</th>
+                  <th class="num">Total Before</th>
+                  <th class="num">Eliminasi</th>
+                  <th class="num">Total After</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" class="muted">Jalankan konsolidasi dulu.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="tab-is" style="display:none">
+            <table id="isTable">
+              <thead>
+                <tr>
+                  <th class="mono">Kode Akun</th>
+                  <th>Deskripsi</th>
+                  <th class="num">Total Before</th>
+                  <th class="num">Eliminasi</th>
+                  <th class="num">Total After</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" class="muted">Jalankan konsolidasi dulu.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="tab-je" style="display:none">
+            <table id="jeTable">
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>AR (A)</th>
+                  <th>AP (B)</th>
+                  <th class="num">Elim</th>
+                  <th class="num">Selisih</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="6" class="muted">Belum ada jurnal eliminasi.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">
+    <b id="toastT">Info</b>
+    <p id="toastM">—</p>
+  </div>
+
+<script>
+  // ---- Minimal state (UI only) ----
+  const state = {
+    step: 1,
+    companies: [], // {id,name,period,bsFile,isFile,accounts:[]}
+    mappings: [],  // {pair, A, arCode, B, apCode}
+    parsedRows: [] // preview table rows
+  };
+
+  const el = (id)=>document.getElementById(id);
+  const toast = (t,m)=>{
+    el("toastT").textContent=t;
+    el("toastM").textContent=m;
+    el("toast").classList.add("show");
+    setTimeout(()=>el("toast").classList.remove("show"), 2400);
+  };
+
+  // Tabs
+  document.querySelectorAll(".tab").forEach(tab=>{
+    tab.addEventListener("click", ()=>{
+      document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+      tab.classList.add("active");
+      const k = tab.dataset.tab;
+      ["preview","bs","is","je"].forEach(name=>{
+        el("tab-"+name).style.display = (name===k) ? "" : "none";
+      });
+    });
+  });
+
+  function setStep(n){
+    state.step = n;
+    el("stepBadge").textContent = `STEP ${n}/3`;
+    el("panel1").style.display = n===1 ? "" : "none";
+    el("panel2").style.display = n===2 ? "" : "none";
+    el("panel3").style.display = n===3 ? "" : "none";
+    ["s1","s2","s3"].forEach((sid,idx)=>{
+      el(sid).classList.toggle("active", idx+1===n);
+    });
+    el("viewBadge").textContent = n===1 ? "Upload dulu" : n===2 ? "Siapkan mapping" : "Hasil siap di-export";
+  }
+
+  function renderCompanies(){
+    const box = el("companyList");
+    box.innerHTML = "";
+    if(!state.companies.length){
+      box.innerHTML = `<div class="hint muted">Belum ada perusahaan.</div>`;
+      return;
+    }
+    state.companies.forEach(c=>{
+      const okBS = !!c.bsFile, okIS = !!c.isFile;
+      const node = document.createElement("div");
+      node.className = "mini";
+      node.innerHTML = `
+        <div class="row">
+          <b>${c.name}</b>
+          <span>${c.period || "-"}</span>
+        </div>
+        <div class="meta">
+          <div class="chip ${okBS?'ok':'warn'}"><span class="k">Neraca</span><span class="v">${okBS?'OK':'—'}</span></div>
+          <div class="chip ${okIS?'ok':'warn'}"><span class="k">L/R</span><span class="v">${okIS?'OK':'—'}</span></div>
+        </div>
+        <div class="btns" style="margin-top:10px">
+          <button class="danger" data-del="${c.id}">Hapus</button>
+        </div>
+      `;
+      box.appendChild(node);
+      node.querySelector("[data-del]").addEventListener("click", ()=>{
+        state.companies = state.companies.filter(x=>x.id!==c.id);
+        renderCompanies(); renderPairSelectors();
+        toast("Dihapus", `Perusahaan ${c.name} dihapus.`);
+      });
+    });
+  }
+
+  function renderPairSelectors(){
+    const sels = [el("pairA"), el("pairB")];
+    sels.forEach(s=>s.innerHTML="");
+    state.companies.forEach(c=>{
+      sels.forEach(s=>{
+        const o=document.createElement("option");
+        o.value=c.id; o.textContent=c.name;
+        s.appendChild(o);
+      });
+    });
+    refreshAccountDropdowns();
+  }
+
+  function refreshAccountDropdowns(){
+    // Placeholder: nanti diisi dari hasil parsing tiap company (AR/AP candidates)
+    // Untuk demo, kita isi pakai parsedRows yang mock.
+    const A = el("pairA").value;
+    const B = el("pairB").value;
+    const ar = el("arCode"); const ap = el("apCode");
+    ar.innerHTML=""; ap.innerHTML="";
+    const rowsA = state.parsedRows.filter(r=>r.companyId===A && r.statement==="BS");
+    const rowsB = state.parsedRows.filter(r=>r.companyId===B && r.statement==="BS");
+
+    const addOpt=(sel, r)=>{
+      const o=document.createElement("option");
+      o.value=r.code;
+      o.textContent=`${r.code} • ${r.name}`;
+      sel.appendChild(o);
+    };
+
+    rowsA.filter(r=>/piutang|receiv/i.test(r.name)).forEach(r=>addOpt(ar,r));
+    rowsB.filter(r=>/hutang|utang|payab/i.test(r.name)).forEach(r=>addOpt(ap,r));
+
+    if(!ar.children.length){
+      const o=document.createElement("option");
+      o.textContent="(Tidak ada kandidat Piutang — jalankan parsing)";
+      o.value="";
+      ar.appendChild(o);
+    }
+    if(!ap.children.length){
+      const o=document.createElement("option");
+      o.textContent="(Tidak ada kandidat Hutang — jalankan parsing)";
+      o.value="";
+      ap.appendChild(o);
+    }
+  }
+
+  function renderMappings(){
+    const box = el("mappingList");
+    box.innerHTML="";
+    if(!state.mappings.length){
+      box.innerHTML = `<div class="hint muted">Belum ada mapping.</div>`;
+      return;
+    }
+    state.mappings.forEach((m,idx)=>{
+      const node=document.createElement("div");
+      node.className="mini";
+      node.innerHTML = `
+        <div class="row">
+          <b>${m.pair}</b>
+          <span class="muted">Mapping #${idx+1}</span>
+        </div>
+        <div class="meta">
+          <div class="chip"><span class="k">AR(A)</span><span class="v">${m.arCode}</span></div>
+          <div class="chip"><span class="k">AP(B)</span><span class="v">${m.apCode}</span></div>
+        </div>
+        <div class="btns" style="margin-top:10px">
+          <button class="danger" data-del="${idx}">Hapus</button>
+        </div>
+      `;
+      node.querySelector("[data-del]").addEventListener("click", ()=>{
+        state.mappings.splice(idx,1);
+        renderMappings();
+      });
+      box.appendChild(node);
+    });
+  }
+
+  function renderPreview(){
+    const tb = el("previewTable").querySelector("tbody");
+    tb.innerHTML="";
+    if(!state.parsedRows.length){
+      tb.innerHTML = `<tr><td colspan="5" class="muted">Belum ada data.</td></tr>`;
+      return;
+    }
+    state.parsedRows.slice(0,14).forEach(r=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML=`
+        <td>${r.company}</td>
+        <td>${r.statement}</td>
+        <td class="mono">${r.code}</td>
+        <td>${r.name}</td>
+        <td class="num">${r.amount.toLocaleString("id-ID")}</td>
+      `;
+      tb.appendChild(tr);
+    });
+  }
+
+  // Events
+  el("addCompanyBtn").addEventListener("click", ()=>{
+    const name = el("companyName").value.trim();
+    if(!name) return toast("Validasi", "Nama perusahaan wajib diisi.");
+    const id = "c_"+Math.random().toString(16).slice(2,8);
+    const c = {
+      id,
+      name,
+      period: el("period").value.trim(),
+      bsFile: el("bsPdf").files[0] || null,
+      isFile: el("isPdf").files[0] || null
+    };
+    state.companies.push(c);
+    el("companyName").value=""; el("period").value="";
+    el("bsPdf").value=""; el("isPdf").value="";
+    renderCompanies(); renderPairSelectors();
+    toast("Ditambahkan", `Perusahaan ${c.name} masuk daftar.`);
+  });
+
+  el("goStep2Btn").addEventListener("click", ()=>{
+    if(state.companies.length<2){
+      return toast("Butuh 2 perusahaan", "Minimal 2 perusahaan untuk mapping eliminasi per pasangan.");
+    }
+    setStep(2);
+  });
+  el("backTo1Btn").addEventListener("click", ()=>setStep(1));
+  el("goStep3Btn").addEventListener("click", ()=>{
+    if(!state.companies.length) return toast("Upload dulu", "Tambahkan perusahaan minimal 1.");
+    setStep(3);
+    // Placeholder status
+    const rs = el("runStatus");
+    rs.innerHTML = `
+      <div class="mini">
+        <div class="row"><b>Ready</b><span class="muted">Belum terhubung backend</span></div>
+        <div class="meta">
+          <div class="chip warn"><span class="k">Parsing</span><span class="v">mock/demo</span></div>
+          <div class="chip warn"><span class="k">Konsolidasi</span><span class="v">mock/demo</span></div>
+        </div>
+      </div>`;
+    toast("Step 3", "Siap export setelah backend dihubungkan.");
+  });
+  el("backTo2Btn").addEventListener("click", ()=>setStep(2));
+
+  el("pairA").addEventListener("change", refreshAccountDropdowns);
+  el("pairB").addEventListener("change", refreshAccountDropdowns);
+
+  el("addMapBtn").addEventListener("click", ()=>{
+    const A = el("pairA").value, B = el("pairB").value;
+    if(!A || !B || A===B) return toast("Validasi", "Pilih 2 perusahaan berbeda untuk pasangan.");
+    const ar = el("arCode").value, ap = el("apCode").value;
+    if(!ar || !ap) return toast("Validasi", "Pilih akun AR dan AP untuk mapping.");
+    const Aname = state.companies.find(x=>x.id===A)?.name || "A";
+    const Bname = state.companies.find(x=>x.id===B)?.name || "B";
+    state.mappings.push({pair:`${Aname} ↔ ${Bname}`, A, arCode:ar, B, apCode:ap});
+    renderMappings();
+    toast("Mapping ditambah", `${Aname}(${ar}) ↔ ${Bname}(${ap})`);
+  });
+
+  el("uploadMapBtn").addEventListener("click", ()=>{
+    toast("Belum aktif", "Nanti tombol ini untuk upload template mapping (CSV/Excel).");
+  });
+
+  el("exportExcelBtn").addEventListener("click", ()=>toast("Export", "Nanti hit endpoint: /export/excel"));
+  el("exportPdfBtn").addEventListener("click", ()=>toast("Export", "Nanti hit endpoint: /export/pdf"));
+
+  el("resetBtn").addEventListener("click", ()=>{
+    state.step=1; state.companies=[]; state.mappings=[]; state.parsedRows=[];
+    renderCompanies(); renderMappings(); renderPreview(); renderPairSelectors();
+    setStep(1);
+    toast("Reset", "State UI direset.");
+  });
+
+  // Mock parse (demo UI without backend)
+  el("mockParseBtn").addEventListener("click", ()=>{
+    if(state.companies.length<2){
+      toast("Tambahkan perusahaan", "Minimal 2 perusahaan agar dropdown mapping terisi.");
+      return;
+    }
+    // Build mock parsed rows
+    state.parsedRows = [];
+    state.companies.forEach((c,i)=>{
+      // BS candidates
+      state.parsedRows.push(
+        {companyId:c.id, company:c.name, statement:"BS", code:`112.101-0${i+1}`, name:`Piutang Usaha - ${i+1}`, amount: 120000000 + i*15000000},
+        {companyId:c.id, company:c.name, statement:"BS", code:`211.101-0${i+1}`, name:`Hutang Usaha - ${i+1}`, amount: 95000000 + i*10000000},
+        {companyId:c.id, company:c.name, statement:"BS", code:`111.102-0${i+1}`, name:`Bank IDR`, amount: 250000000 + i*20000000}
+      );
+      // IS
+      state.parsedRows.push(
+        {companyId:c.id, company:c.name, statement:"IS", code:`411.000-0${i+1}`, name:`Penjualan Bersih`, amount: 780000000 + i*90000000},
+        {companyId:c.id, company:c.name, statement:"IS", code:`511.000-0${i+1}`, name:`Harga Pokok Penjualan`, amount: -480000000 - i*60000000}
+      );
+    });
+    renderPreview();
+    renderPairSelectors();
+    toast("Mock parse", "Demo data terisi. (Nanti diganti hasil parsing PDF asli)");
+  });
+
+  // init
+  setStep(1);
+  renderCompanies();
+  renderMappings();
+  renderPreview();
+  renderPairSelectors();
+</script>
+</body>
+</html>
