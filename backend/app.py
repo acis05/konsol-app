@@ -12,9 +12,21 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, DateTime, String, create_engine, func
-from sqlalchemy.types import JSON
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
-from starlette.responses import JSONResponse
+from sqlalchemy.types import JSON
+from starlette.responses import JSONResponse, StreamingResponse
+
+# Excel
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+
+# PDF (ReportLab - premium table)
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 # =========================
 # App & CORS
@@ -33,18 +45,13 @@ app.add_middleware(
 # =========================
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
-    # fallback local sqlite (dev)
     DATABASE_URL = "sqlite:///./local.db"
 
-# Psycopg2 URL compatibility (railway sometimes gives postgres://)
+# Railway kadang kasih postgres://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
-
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
@@ -59,7 +66,7 @@ class Report(Base):
     companies_text = Column(String, nullable=True)
     mapping_count = Column(String(16), nullable=True)
 
-    # ✅ aman untuk Postgres & SQLite
+    # aman untuk Postgres & SQLite
     payload = Column(JSON, nullable=False)
     result = Column(JSON, nullable=False)
 
@@ -86,7 +93,6 @@ ACCOUNT_CODE_RE = re.compile(r"^\s*(\d{3}\.\d{3}-\d{2}(?:\.\d+)?[A-Za-z]?)\s+")
 
 # Amount di ujung: 14,260,127,477 atau 14.260.127.477 atau (1.234.000)
 AMOUNT_RE = re.compile(r"(-?\(?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?\s*\)?)\s*$")
-
 
 ID_MONTHS = {
     "januari": 1, "jan": 1,
@@ -144,13 +150,9 @@ def extract_lines_from_pdf(pdf_bytes: bytes) -> List[str]:
 
 
 def detect_period(lines: List[str]) -> Dict[str, Optional[str]]:
-    """
-    Deteksi periode dari teks PDF.
-    Return: {"label": "...", "as_of": "YYYY-MM-DD" or None}
-    """
     head = " \n ".join(lines[:60]).lower()
 
-    # Pattern 1: "Per 31 Desember 2025" / "Per 31-12-2025" / "Per 31/12/2025"
+    # "Per 31 Desember 2025"
     m1 = re.search(r"\bper\s+(\d{1,2})\s+([a-zA-Z]{3,9})\s+(\d{4})\b", head)
     if m1:
         d = int(m1.group(1))
@@ -161,6 +163,7 @@ def detect_period(lines: List[str]) -> Dict[str, Optional[str]]:
             label = f"Per {d} {m1.group(2)} {y}"
             return {"label": label, "as_of": as_of}
 
+    # "Per 31/12/2025" or "Per 31-12-2025"
     m2 = re.search(r"\bper\s+(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b", head)
     if m2:
         d, mon, y = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
@@ -171,8 +174,11 @@ def detect_period(lines: List[str]) -> Dict[str, Optional[str]]:
         except Exception:
             pass
 
-    # Pattern 2: rentang periode "01/12/2025 s.d 31/12/2025"
-    m3 = re.search(r"(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4}).{0,30}(s\.?d\.?|sampai|to|-\s*)(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})", head)
+    # rentang "01/12/2025 s.d 31/12/2025"
+    m3 = re.search(
+        r"(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4}).{0,30}(s\.?d\.?|sampai|to|-\s*)(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})",
+        head
+    )
     if m3:
         d2, m2_, y2 = int(m3.group(5)), int(m3.group(6)), int(m3.group(7))
         try:
@@ -392,7 +398,7 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
             out.append({
                 "account_code": code,
                 "account_name": name,
-                "by_company": bc,          # ini kunci untuk laporan komparasi multi-company
+                "by_company": bc,
                 "total_before": total_before,
                 "elimination": elimination,
                 "total_after": total_after
@@ -427,7 +433,7 @@ async def api_parse(
         "company_name": company_name,
         "period": period or None,
         "statement": statement,
-        "detected_period": detected,  # <-- NEW
+        "detected_period": detected,
         "rows": rows,
         "warnings": warnings
     })
@@ -443,28 +449,22 @@ async def api_consolidate(req: ConsolidateRequest):
 # Routes: Reports (Arsip)
 # =========================
 class CreateReportRequest(BaseModel):
-    # payloadnya sama seperti consolidate
     companies: List[CompanyPayload]
     pair_mappings: List[PairMapping] = Field(default_factory=list)
     options: ConsolidateOptions = Field(default_factory=ConsolidateOptions)
-
-    # metadata tambahan (opsional) dari frontend
     period_label: Optional[str] = None
     as_of: Optional[str] = None
 
 
 @app.post("/api/reports")
 def create_report(req: CreateReportRequest, db: Session = Depends(get_db)):
-    # hitung konsolidasi
     result = consolidate(req.companies, req.pair_mappings, req.options)
 
     rid = "rpt_" + datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-
     company_names = [c.company_name for c in req.companies]
     companies_text = "|".join(company_names)
     mapping_count = str(len(req.pair_mappings))
 
-    # simpan
     r = Report(
         report_id=rid,
         period_label=req.period_label,
@@ -485,7 +485,10 @@ def list_reports(query: Optional[str] = None, limit: int = 50, db: Session = Dep
     q = db.query(Report).order_by(Report.created_at.desc())
     if query:
         like = f"%{query.lower()}%"
-        q = q.filter(func.lower(Report.companies_text).like(like) | func.lower(func.coalesce(Report.period_label, "")).like(like))
+        q = q.filter(
+            func.lower(Report.companies_text).like(like)
+            | func.lower(func.coalesce(Report.period_label, "")).like(like)
+        )
     items = q.limit(min(max(limit, 1), 200)).all()
 
     return {
@@ -528,14 +531,18 @@ def delete_report(report_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True}
 
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.pdfgen import canvas
-from starlette.responses import StreamingResponse
 
+# =========================
+# Export helpers (Excel/PDF)
+# =========================
 def _company_names(req: ConsolidateRequest) -> List[str]:
     return [c.company_name for c in req.companies]
+
+
+def _fmt_id(n: int) -> str:
+    s = f"{int(n):,}"
+    return s.replace(",", ".")
+
 
 def _make_excel(req: ConsolidateRequest) -> bytes:
     result = consolidate(req.companies, req.pair_mappings, req.options)
@@ -548,20 +555,31 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
         headers = ["Kode", "Nama Akun"] + companies + ["Eliminasi", "Total Konsol"]
         ws.append(headers)
 
+        # header style
+        for col in range(1, len(headers) + 1):
+            ws.cell(row=1, column=col).font = Font(bold=True)
+            ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
+
         for r in rows:
             byc = r.get("by_company", {}) or {}
-            line = [r["account_code"], r["account_name"]]
+            line = [r.get("account_code", ""), r.get("account_name", "")]
             for cn in companies:
                 line.append(int(byc.get(cn, 0) or 0))
             line.append(int(r.get("elimination", 0) or 0))
             line.append(int(r.get("total_after", 0) or 0))
             ws.append(line)
 
-        # auto width (simple)
-        for col in range(1, len(headers)+1):
-            ws.column_dimensions[get_column_letter(col)].width = 18 if col > 2 else 22
+        # align number columns to right
+        num_start = 3  # Kode=1, Nama=2
+        num_end = len(headers)
+        for row in range(2, ws.max_row + 1):
+            for col in range(num_start, num_end + 1):
+                ws.cell(row=row, column=col).alignment = Alignment(horizontal="right")
 
-    # remove default sheet
+        # widths
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 18 if col >= 3 else (22 if col == 1 else 45)
+
     default = wb.active
     wb.remove(default)
 
@@ -571,19 +589,28 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
     # JE Sheet
     ws = wb.create_sheet("Jurnal_Eliminasi")
     ws.append(["Pair", "DR Akun", "CR Akun", "Elim", "Selisih", "Status"])
+    for col in range(1, 7):
+        ws.cell(row=1, column=col).font = Font(bold=True)
+        ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
+
     for j in (result.get("elimination_journal") or []):
         dr = (j.get("lines") or [{}])[0].get("account_code", "")
         cr = (j.get("lines") or [{}, {}])[1].get("account_code", "")
         ws.append([
-            j.get("pair_name",""),
+            j.get("pair_name", ""),
             dr,
             cr,
-            int(j.get("amount",0) or 0),
-            int(j.get("difference",0) or 0),
-            j.get("status","")
+            int(j.get("amount", 0) or 0),
+            int(j.get("difference", 0) or 0),
+            j.get("status", "")
         ])
+
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row=row, column=4).alignment = Alignment(horizontal="right")
+        ws.cell(row=row, column=5).alignment = Alignment(horizontal="right")
+
     for col in range(1, 7):
-        ws.column_dimensions[get_column_letter(col)].width = 20
+        ws.column_dimensions[get_column_letter(col)].width = 22
 
     bio = io.BytesIO()
     wb.save(bio)
@@ -591,88 +618,140 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
 
 
 def _make_pdf(req: ConsolidateRequest) -> bytes:
+    """
+    PDF premium: tabel komparasi multi-company, angka rata kanan + pemisah ribuan '.'
+    """
     result = consolidate(req.companies, req.pair_mappings, req.options)
     companies = _company_names(req)
 
     bio = io.BytesIO()
-    c = canvas.Canvas(bio, pagesize=landscape(A4))
-    w, h = landscape(A4)
+    doc = SimpleDocTemplate(
+        bio,
+        pagesize=landscape(A4),
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm
+    )
 
-    def draw_table(title: str, rows: List[Dict[str, Any]]):
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(24, h-32, title)
-        c.setFont("Helvetica", 9)
+    styles = getSampleStyleSheet()
+    title_style = styles["Heading2"]
+    title_style.fontName = "Helvetica-Bold"
+    title_style.fontSize = 13
+
+    normal = styles["Normal"]
+    normal.fontName = "Helvetica"
+    normal.fontSize = 8.5
+    normal.leading = 10
+
+    def build_table(title: str, rows: List[Dict[str, Any]]):
+        story_part = [Paragraph(title, title_style), Spacer(1, 6)]
 
         headers = ["Kode", "Nama Akun"] + companies + ["Elim", "Total"]
-        x0, y = 24, h-52
+        data: List[List[Any]] = [headers]
 
-        col_w = [70, 220] + [80]*len(companies) + [70, 85]
-        # header
-        x = x0
-        for i, head in enumerate(headers):
-            c.drawString(x, y, str(head)[:30])
-            x += col_w[i]
-        y -= 14
-
-        max_rows = 28  # per page
-        count = 0
         for r in rows:
-            if count >= max_rows:
-                c.showPage()
-                c.setFont("Helvetica-Bold", 14)
-                c.drawString(24, h-32, title + " (lanjutan)")
-                c.setFont("Helvetica", 9)
-                x = x0
-                y = h-52
-                for i, head in enumerate(headers):
-                    c.drawString(x, y, str(head)[:30])
-                    x += col_w[i]
-                y -= 14
-                count = 0
-
             byc = r.get("by_company", {}) or {}
-            values = [r["account_code"], r["account_name"][:40]]
+            row_line: List[Any] = [
+                r.get("account_code", ""),
+                Paragraph((r.get("account_name", "") or ""), normal),
+            ]
             for cn in companies:
-                values.append(f"{int(byc.get(cn,0) or 0):,}".replace(",", "."))
-            values.append(f"{int(r.get('elimination',0) or 0):,}".replace(",", "."))
-            values.append(f"{int(r.get('total_after',0) or 0):,}".replace(",", "."))
+                row_line.append(_fmt_id(byc.get(cn, 0) or 0))
+            row_line.append(_fmt_id(r.get("elimination", 0) or 0))
+            row_line.append(_fmt_id(r.get("total_after", 0) or 0))
+            data.append(row_line)
 
-            x = x0
-            for i, val in enumerate(values):
-                c.drawString(x, y, str(val))
-                x += col_w[i]
-            y -= 12
-            count += 1
+        # Column widths (premium)
+        # Kode, Nama, company cols, Elim, Total
+        col_widths = [28 * mm, 92 * mm] + [26 * mm] * len(companies) + [24 * mm, 28 * mm]
 
-        c.showPage()
+        tbl = Table(data, colWidths=col_widths, repeatRows=1)
 
-    draw_table("Neraca Konsolidasi (Komparasi)", result.get("bs_comparison", []))
-    draw_table("Laba/Rugi Konsolidasi (Komparasi)", result.get("is_comparison", []))
+        # angka mulai kolom index 2 sampai akhir
+        tbl.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a2533")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
 
-    # JE page
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(24, h-32, "Jurnal Eliminasi")
-    c.setFont("Helvetica", 10)
-    y = h-52
-    c.drawString(24, y, "Pair | DR | CR | Elim | Selisih | Status")
-    y -= 16
-    c.setFont("Helvetica", 9)
+            ("FONTNAME", (0, 1), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 1), (-1, -1), 8.5),
 
-    for j in (result.get("elimination_journal") or [])[:40]:
-        dr = (j.get("lines") or [{}])[0].get("account_code","")
-        cr = (j.get("lines") or [{}, {}])[1].get("account_code","")
-        line = f"{j.get('pair_name','')} | {dr} | {cr} | {int(j.get('amount',0) or 0):,} | {int(j.get('difference',0) or 0):,} | {j.get('status','')}"
-        line = line.replace(",", ".")
-        c.drawString(24, y, line[:140])
-        y -= 12
-        if y < 40:
-            c.showPage()
-            y = h-52
+            # ✅ ALIGNMENT FIX: semua kolom angka RIGHT (header+body)
+            ("ALIGN", (0, 0), (1, -1), "LEFT"),
+            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+            ("ALIGN", (2, 0), (-1, 0), "RIGHT"),
 
-    c.save()
+            # ✅ angka monospace biar rapi
+            ("FONTNAME", (2, 1), (-1, -1), "Courier"),
+
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#2a3a4a")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#0f1620"), colors.HexColor("#0c121a")]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ]))
+
+        story_part.append(tbl)
+        return story_part
+
+    story: List[Any] = []
+    story += build_table("Neraca Konsolidasi (Komparasi)", result.get("bs_comparison", []))
+    story.append(PageBreak())
+    story += build_table("Laba/Rugi Konsolidasi (Komparasi)", result.get("is_comparison", []))
+    story.append(PageBreak())
+
+    # Jurnal Eliminasi
+    story.append(Paragraph("Jurnal Eliminasi", title_style))
+    story.append(Spacer(1, 6))
+
+    je = result.get("elimination_journal", []) or []
+    je_headers = ["Pair", "DR", "CR", "Elim", "Selisih", "Status"]
+    je_data: List[List[Any]] = [je_headers]
+
+    for j in je:
+        dr = (j.get("lines") or [{}])[0].get("account_code", "")
+        cr = (j.get("lines") or [{}, {}])[1].get("account_code", "")
+        je_data.append([
+            j.get("pair_name", ""),
+            dr,
+            cr,
+            _fmt_id(j.get("amount", 0) or 0),
+            _fmt_id(j.get("difference", 0) or 0),
+            j.get("status", "")
+        ])
+
+    je_tbl = Table(
+        je_data,
+        colWidths=[80 * mm, 28 * mm, 28 * mm, 25 * mm, 25 * mm, 22 * mm],
+        repeatRows=1
+    )
+    je_tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a2533")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#2a3a4a")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#0f1620"), colors.HexColor("#0c121a")]),
+
+        ("ALIGN", (0, 0), (2, -1), "LEFT"),
+        ("ALIGN", (3, 0), (4, -1), "RIGHT"),
+        ("FONTNAME", (3, 1), (4, -1), "Courier"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+    ]))
+    story.append(je_tbl)
+
+    doc.build(story)
     return bio.getvalue()
 
 
+# =========================
+# Export routes
+# =========================
 @app.post("/api/export/excel")
 def export_excel(req: ConsolidateRequest):
     data = _make_excel(req)
