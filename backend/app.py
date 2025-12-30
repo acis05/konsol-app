@@ -670,29 +670,33 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
 
         # angka mulai kolom index 2 sampai akhir
         tbl.setStyle(TableStyle([
+            # HEADER
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a2533")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f4f7")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
 
-            ("FONTNAME", (0, 1), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+            # BODY
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
 
-            # ✅ ALIGNMENT FIX: semua kolom angka RIGHT (header+body)
+            # ALIGNMENT
             ("ALIGN", (0, 0), (1, -1), "LEFT"),
             ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-            ("ALIGN", (2, 0), (-1, 0), "RIGHT"),
 
-            # ✅ angka monospace biar rapi
-            ("FONTNAME", (2, 1), (-1, -1), "Courier"),
+            # GRID
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
 
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#2a3a4a")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#0f1620"), colors.HexColor("#0c121a")]),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, 0), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            # ZEBRA ROW
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+            [colors.white, colors.HexColor("#f9fafb")]),
+
+            # PADDING
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
 
         story_part.append(tbl)
