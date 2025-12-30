@@ -712,27 +712,36 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
     story.append(Paragraph("Jurnal Eliminasi", title_style))
     story.append(Spacer(1, 6))
 
-    je = result.get("elimination_journal", []) or []
-    je_headers = ["Pair", "DR", "CR", "Elim", "Selisih", "Status"]
-    je_data: List[List[Any]] = [je_headers]
+    je_tbl.setStyle(TableStyle([
+    # HEADER
+    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+    ("FONTSIZE", (0, 0), (-1, 0), 9),
+    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f4f7")),
+    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
 
-    for j in je:
-        dr = (j.get("lines") or [{}])[0].get("account_code", "")
-        cr = (j.get("lines") or [{}, {}])[1].get("account_code", "")
-        je_data.append([
-            j.get("pair_name", ""),
-            dr,
-            cr,
-            _fmt_id(j.get("amount", 0) or 0),
-            _fmt_id(j.get("difference", 0) or 0),
-            j.get("status", "")
-        ])
+    # BODY
+    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+    ("FONTSIZE", (0, 1), (-1, -1), 9),
+    ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
 
-    je_tbl = Table(
-        je_data,
-        colWidths=[80 * mm, 28 * mm, 28 * mm, 25 * mm, 25 * mm, 22 * mm],
-        repeatRows=1
-    )
+    # ALIGNMENT
+    ("ALIGN", (0, 0), (1, -1), "LEFT"),
+    ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+
+    # GRID & BACKGROUND
+    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+        colors.white,
+        colors.HexColor("#f9fafb")
+    ]),
+
+    # SPACING
+    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ("TOPPADDING", (0, 0), (-1, -1), 5),
+    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+
     je_tbl.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
