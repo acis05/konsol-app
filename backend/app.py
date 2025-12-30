@@ -21,7 +21,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
-# PDF (ReportLab - premium table)
+# PDF (ReportLab)
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
@@ -47,7 +47,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     DATABASE_URL = "sqlite:///./local.db"
 
-# Railway kadang kasih postgres://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -66,7 +65,6 @@ class Report(Base):
     companies_text = Column(String, nullable=True)
     mapping_count = Column(String(16), nullable=True)
 
-    # aman untuk Postgres & SQLite
     payload = Column(JSON, nullable=False)
     result = Column(JSON, nullable=False)
 
@@ -87,11 +85,7 @@ def on_startup():
 # =========================
 # PDF Parsing helpers
 # =========================
-
-# Contoh kode akun: 111.102-01
 ACCOUNT_CODE_RE = re.compile(r"^\s*(\d{3}\.\d{3}-\d{2}(?:\.\d+)?[A-Za-z]?)\s+")
-
-# Amount di ujung: 14,260,127,477 atau 14.260.127.477 atau (1.234.000)
 AMOUNT_RE = re.compile(r"(-?\(?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?\s*\)?)\s*$")
 
 ID_MONTHS = {
@@ -119,8 +113,6 @@ def parse_amount_id(amount_str: str) -> Optional[int]:
 
     s = s.replace(" ", "")
 
-    # normalize separators:
-    # if both '.' and ',' appear, assume '.' thousands and ',' decimals
     if "." in s and "," in s:
         s = s.replace(".", "")
         s = s.split(",")[0]
@@ -152,7 +144,6 @@ def extract_lines_from_pdf(pdf_bytes: bytes) -> List[str]:
 def detect_period(lines: List[str]) -> Dict[str, Optional[str]]:
     head = " \n ".join(lines[:60]).lower()
 
-    # "Per 31 Desember 2025"
     m1 = re.search(r"\bper\s+(\d{1,2})\s+([a-zA-Z]{3,9})\s+(\d{4})\b", head)
     if m1:
         d = int(m1.group(1))
@@ -163,7 +154,6 @@ def detect_period(lines: List[str]) -> Dict[str, Optional[str]]:
             label = f"Per {d} {m1.group(2)} {y}"
             return {"label": label, "as_of": as_of}
 
-    # "Per 31/12/2025" or "Per 31-12-2025"
     m2 = re.search(r"\bper\s+(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b", head)
     if m2:
         d, mon, y = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
@@ -174,7 +164,6 @@ def detect_period(lines: List[str]) -> Dict[str, Optional[str]]:
         except Exception:
             pass
 
-    # rentang "01/12/2025 s.d 31/12/2025"
     m3 = re.search(
         r"(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4}).{0,30}(s\.?d\.?|sampai|to|-\s*)(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})",
         head
@@ -266,7 +255,7 @@ class PairMapping(BaseModel):
 
 
 class ConsolidateOptions(BaseModel):
-    elim_method: str = "MIN_ABS"   # MIN_ABS | STRICT_EQUAL
+    elim_method: str = "MIN_ABS"
     strict_match: bool = False
 
 
@@ -340,24 +329,7 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
         ar_bal = ar_row.amount
         ap_bal = ap_row.amount
 
-        if options.elim_method == "STRICT_EQUAL":
-            if abs(ar_bal) != abs(ap_bal):
-                unreconciled.append({
-                    "pair_name": mp.pair_name,
-                    "company_ar": mp.company_ar,
-                    "ar_account_code": mp.ar_account_code,
-                    "company_ap": mp.company_ap,
-                    "ap_account_code": mp.ap_account_code,
-                    "ar_balance": ar_bal,
-                    "ap_balance": ap_bal,
-                    "difference": abs(ar_bal) - abs(ap_bal)
-                })
-                if options.strict_match:
-                    continue
-            elim_amt = min(abs(ar_bal), abs(ap_bal))
-        else:
-            elim_amt = min(abs(ar_bal), abs(ap_bal))
-
+        elim_amt = min(abs(ar_bal), abs(ap_bal))
         diff = abs(ar_bal) - abs(ap_bal)
 
         elim_effect_bs[mp.ar_account_code] = elim_effect_bs.get(mp.ar_account_code, 0) - elim_amt
@@ -420,12 +392,11 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
 async def api_parse(
     company_name: str = Form(...),
     period: str = Form(""),
-    statement: str = Form(...),  # BS / IS
+    statement: str = Form(...),
     file: UploadFile = File(...)
 ):
     pdf_bytes = await file.read()
     lines = extract_lines_from_pdf(pdf_bytes)
-
     detected = detect_period(lines)
     rows, warnings = parse_statement_rows(lines)
 
@@ -441,8 +412,7 @@ async def api_parse(
 
 @app.post("/api/consolidate")
 async def api_consolidate(req: ConsolidateRequest):
-    result = consolidate(req.companies, req.pair_mappings, req.options)
-    return JSONResponse(result)
+    return JSONResponse(consolidate(req.companies, req.pair_mappings, req.options))
 
 
 # =========================
@@ -459,18 +429,17 @@ class CreateReportRequest(BaseModel):
 @app.post("/api/reports")
 def create_report(req: CreateReportRequest, db: Session = Depends(get_db)):
     result = consolidate(req.companies, req.pair_mappings, req.options)
-
     rid = "rpt_" + datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+
     company_names = [c.company_name for c in req.companies]
     companies_text = "|".join(company_names)
-    mapping_count = str(len(req.pair_mappings))
 
     r = Report(
         report_id=rid,
         period_label=req.period_label,
         as_of_date=req.as_of,
         companies_text=companies_text,
-        mapping_count=mapping_count,
+        mapping_count=str(len(req.pair_mappings)),
         payload=req.model_dump(),
         result=result
     )
@@ -511,7 +480,6 @@ def get_report(report_id: str, db: Session = Depends(get_db)):
     r = db.query(Report).filter(Report.report_id == report_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="Report not found")
-
     return {
         "report_id": r.report_id,
         "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -533,7 +501,7 @@ def delete_report(report_id: str, db: Session = Depends(get_db)):
 
 
 # =========================
-# Export helpers (Excel/PDF)
+# Export helpers
 # =========================
 def _company_names(req: ConsolidateRequest) -> List[str]:
     return [c.company_name for c in req.companies]
@@ -555,7 +523,6 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
         headers = ["Kode", "Nama Akun"] + companies + ["Eliminasi", "Total Konsol"]
         ws.append(headers)
 
-        # header style
         for col in range(1, len(headers) + 1):
             ws.cell(row=1, column=col).font = Font(bold=True)
             ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
@@ -569,14 +536,11 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
             line.append(int(r.get("total_after", 0) or 0))
             ws.append(line)
 
-        # align number columns to right
-        num_start = 3  # Kode=1, Nama=2
-        num_end = len(headers)
+        # align numbers right
         for row in range(2, ws.max_row + 1):
-            for col in range(num_start, num_end + 1):
+            for col in range(3, len(headers) + 1):
                 ws.cell(row=row, column=col).alignment = Alignment(horizontal="right")
 
-        # widths
         for col in range(1, len(headers) + 1):
             ws.column_dimensions[get_column_letter(col)].width = 18 if col >= 3 else (22 if col == 1 else 45)
 
@@ -586,7 +550,7 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
     add_sheet("Neraca_Konsol", result.get("bs_comparison", []))
     add_sheet("LabaRugi_Konsol", result.get("is_comparison", []))
 
-    # JE Sheet
+    # JE sheet
     ws = wb.create_sheet("Jurnal_Eliminasi")
     ws.append(["Pair", "DR Akun", "CR Akun", "Elim", "Selisih", "Status"])
     for col in range(1, 7):
@@ -617,10 +581,32 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
     return bio.getvalue()
 
 
+def _table_style_clear() -> TableStyle:
+    return TableStyle([
+        # header
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f4f7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+
+        # body
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
+
+        # grid + zebra
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+
+        # padding
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ])
+
+
 def _make_pdf(req: ConsolidateRequest) -> bytes:
-    """
-    PDF premium: tabel komparasi multi-company, angka rata kanan + pemisah ribuan '.'
-    """
     result = consolidate(req.companies, req.pair_mappings, req.options)
     companies = _company_names(req)
 
@@ -662,42 +648,14 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
             row_line.append(_fmt_id(r.get("total_after", 0) or 0))
             data.append(row_line)
 
-        # Column widths (premium)
-        # Kode, Nama, company cols, Elim, Total
         col_widths = [28 * mm, 92 * mm] + [26 * mm] * len(companies) + [24 * mm, 28 * mm]
-
         tbl = Table(data, colWidths=col_widths, repeatRows=1)
 
-        # angka mulai kolom index 2 sampai akhir
-        tbl.setStyle(TableStyle([
-            # HEADER
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f4f7")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
-
-            # BODY
-            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 1), (-1, -1), 9),
-            ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
-
-            # ALIGNMENT
-            ("ALIGN", (0, 0), (1, -1), "LEFT"),
-            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-
-            # GRID
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
-
-            # ZEBRA ROW
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-            [colors.white, colors.HexColor("#f9fafb")]),
-
-            # PADDING
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
+        st = _table_style_clear()
+        # align: first 2 cols left, numbers right
+        st.add("ALIGN", (0, 0), (1, -1), "LEFT")
+        st.add("ALIGN", (2, 0), (-1, -1), "RIGHT")
+        tbl.setStyle(st)
 
         story_part.append(tbl)
         return story_part
@@ -708,54 +666,37 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
     story += build_table("Laba/Rugi Konsolidasi (Komparasi)", result.get("is_comparison", []))
     story.append(PageBreak())
 
-    # Jurnal Eliminasi
+    # ===== JE =====
     story.append(Paragraph("Jurnal Eliminasi", title_style))
     story.append(Spacer(1, 6))
 
-    je_tbl.setStyle(TableStyle([
-    # HEADER
-    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-    ("FONTSIZE", (0, 0), (-1, 0), 9),
-    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f4f7")),
-    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+    je = result.get("elimination_journal", []) or []
+    je_headers = ["Pair", "DR", "CR", "Elim", "Selisih", "Status"]
+    je_data: List[List[Any]] = [je_headers]
 
-    # BODY
-    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-    ("FONTSIZE", (0, 1), (-1, -1), 9),
-    ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
+    for j in je:
+        dr = (j.get("lines") or [{}])[0].get("account_code", "")
+        cr = (j.get("lines") or [{}, {}])[1].get("account_code", "")
+        je_data.append([
+            j.get("pair_name", ""),
+            dr,
+            cr,
+            _fmt_id(j.get("amount", 0) or 0),
+            _fmt_id(j.get("difference", 0) or 0),
+            j.get("status", "")
+        ])
 
-    # ALIGNMENT
-    ("ALIGN", (0, 0), (1, -1), "LEFT"),
-    ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+    je_tbl = Table(
+        je_data,
+        colWidths=[80 * mm, 28 * mm, 28 * mm, 25 * mm, 25 * mm, 22 * mm],
+        repeatRows=1
+    )
 
-    # GRID & BACKGROUND
-    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
-    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-        colors.white,
-        colors.HexColor("#f9fafb")
-    ]),
+    je_style = _table_style_clear()
+    je_style.add("ALIGN", (0, 0), (2, -1), "LEFT")
+    je_style.add("ALIGN", (3, 0), (4, -1), "RIGHT")
+    je_tbl.setStyle(je_style)
 
-    # SPACING
-    ("LEFTPADDING", (0, 0), (-1, -1), 6),
-    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-    ("TOPPADDING", (0, 0), (-1, -1), 5),
-    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-
-    je_tbl.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 9),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a2533")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#2a3a4a")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#0f1620"), colors.HexColor("#0c121a")]),
-
-        ("ALIGN", (0, 0), (2, -1), "LEFT"),
-        ("ALIGN", (3, 0), (4, -1), "RIGHT"),
-        ("FONTNAME", (3, 1), (4, -1), "Courier"),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("FONTSIZE", (0, 1), (-1, -1), 8.5),
-    ]))
     story.append(je_tbl)
 
     doc.build(story)
