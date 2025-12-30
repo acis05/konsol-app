@@ -5,3 +5,5 @@ python-multipart==0.0.9
 pydantic==2.8.2
 sqlalchemy
 psycopg2-binary
+openpyxl
+reportlab

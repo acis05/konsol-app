@@ -11,8 +11,8 @@ import pdfplumber
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, DateTime, String, Text, create_engine, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, DateTime, String, create_engine, func
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from starlette.responses import JSONResponse
 
@@ -54,14 +54,14 @@ class Report(Base):
     report_id = Column(String(64), primary_key=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    # search helpers
     period_label = Column(String(128), nullable=True)
-    as_of_date = Column(String(32), nullable=True)  # store ISO string for simplicity
-    companies_text = Column(Text, nullable=True)    # "PT A|PT B|PT C"
+    as_of_date = Column(String(32), nullable=True)
+    companies_text = Column(String, nullable=True)
     mapping_count = Column(String(16), nullable=True)
 
-    payload = Column(JSONB().with_variant(Text, "sqlite"), nullable=False)
-    result = Column(JSONB().with_variant(Text, "sqlite"), nullable=False)
+    # ✅ aman untuk Postgres & SQLite
+    payload = Column(JSON, nullable=False)
+    result = Column(JSON, nullable=False)
 
 
 def get_db():
@@ -527,3 +527,167 @@ def delete_report(report_id: str, db: Session = Depends(get_db)):
     db.delete(r)
     db.commit()
     return {"ok": True}
+
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.pdfgen import canvas
+from starlette.responses import StreamingResponse
+
+def _company_names(req: ConsolidateRequest) -> List[str]:
+    return [c.company_name for c in req.companies]
+
+def _make_excel(req: ConsolidateRequest) -> bytes:
+    result = consolidate(req.companies, req.pair_mappings, req.options)
+    companies = _company_names(req)
+
+    wb = Workbook()
+
+    def add_sheet(title: str, rows: List[Dict[str, Any]]):
+        ws = wb.create_sheet(title)
+        headers = ["Kode", "Nama Akun"] + companies + ["Eliminasi", "Total Konsol"]
+        ws.append(headers)
+
+        for r in rows:
+            byc = r.get("by_company", {}) or {}
+            line = [r["account_code"], r["account_name"]]
+            for cn in companies:
+                line.append(int(byc.get(cn, 0) or 0))
+            line.append(int(r.get("elimination", 0) or 0))
+            line.append(int(r.get("total_after", 0) or 0))
+            ws.append(line)
+
+        # auto width (simple)
+        for col in range(1, len(headers)+1):
+            ws.column_dimensions[get_column_letter(col)].width = 18 if col > 2 else 22
+
+    # remove default sheet
+    default = wb.active
+    wb.remove(default)
+
+    add_sheet("Neraca_Konsol", result.get("bs_comparison", []))
+    add_sheet("LabaRugi_Konsol", result.get("is_comparison", []))
+
+    # JE Sheet
+    ws = wb.create_sheet("Jurnal_Eliminasi")
+    ws.append(["Pair", "DR Akun", "CR Akun", "Elim", "Selisih", "Status"])
+    for j in (result.get("elimination_journal") or []):
+        dr = (j.get("lines") or [{}])[0].get("account_code", "")
+        cr = (j.get("lines") or [{}, {}])[1].get("account_code", "")
+        ws.append([
+            j.get("pair_name",""),
+            dr,
+            cr,
+            int(j.get("amount",0) or 0),
+            int(j.get("difference",0) or 0),
+            j.get("status","")
+        ])
+    for col in range(1, 7):
+        ws.column_dimensions[get_column_letter(col)].width = 20
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+def _make_pdf(req: ConsolidateRequest) -> bytes:
+    result = consolidate(req.companies, req.pair_mappings, req.options)
+    companies = _company_names(req)
+
+    bio = io.BytesIO()
+    c = canvas.Canvas(bio, pagesize=landscape(A4))
+    w, h = landscape(A4)
+
+    def draw_table(title: str, rows: List[Dict[str, Any]]):
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(24, h-32, title)
+        c.setFont("Helvetica", 9)
+
+        headers = ["Kode", "Nama Akun"] + companies + ["Elim", "Total"]
+        x0, y = 24, h-52
+
+        col_w = [70, 220] + [80]*len(companies) + [70, 85]
+        # header
+        x = x0
+        for i, head in enumerate(headers):
+            c.drawString(x, y, str(head)[:30])
+            x += col_w[i]
+        y -= 14
+
+        max_rows = 28  # per page
+        count = 0
+        for r in rows:
+            if count >= max_rows:
+                c.showPage()
+                c.setFont("Helvetica-Bold", 14)
+                c.drawString(24, h-32, title + " (lanjutan)")
+                c.setFont("Helvetica", 9)
+                x = x0
+                y = h-52
+                for i, head in enumerate(headers):
+                    c.drawString(x, y, str(head)[:30])
+                    x += col_w[i]
+                y -= 14
+                count = 0
+
+            byc = r.get("by_company", {}) or {}
+            values = [r["account_code"], r["account_name"][:40]]
+            for cn in companies:
+                values.append(f"{int(byc.get(cn,0) or 0):,}".replace(",", "."))
+            values.append(f"{int(r.get('elimination',0) or 0):,}".replace(",", "."))
+            values.append(f"{int(r.get('total_after',0) or 0):,}".replace(",", "."))
+
+            x = x0
+            for i, val in enumerate(values):
+                c.drawString(x, y, str(val))
+                x += col_w[i]
+            y -= 12
+            count += 1
+
+        c.showPage()
+
+    draw_table("Neraca Konsolidasi (Komparasi)", result.get("bs_comparison", []))
+    draw_table("Laba/Rugi Konsolidasi (Komparasi)", result.get("is_comparison", []))
+
+    # JE page
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(24, h-32, "Jurnal Eliminasi")
+    c.setFont("Helvetica", 10)
+    y = h-52
+    c.drawString(24, y, "Pair | DR | CR | Elim | Selisih | Status")
+    y -= 16
+    c.setFont("Helvetica", 9)
+
+    for j in (result.get("elimination_journal") or [])[:40]:
+        dr = (j.get("lines") or [{}])[0].get("account_code","")
+        cr = (j.get("lines") or [{}, {}])[1].get("account_code","")
+        line = f"{j.get('pair_name','')} | {dr} | {cr} | {int(j.get('amount',0) or 0):,} | {int(j.get('difference',0) or 0):,} | {j.get('status','')}"
+        line = line.replace(",", ".")
+        c.drawString(24, y, line[:140])
+        y -= 12
+        if y < 40:
+            c.showPage()
+            y = h-52
+
+    c.save()
+    return bio.getvalue()
+
+
+@app.post("/api/export/excel")
+def export_excel(req: ConsolidateRequest):
+    data = _make_excel(req)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=konsolidasi.xlsx"},
+    )
+
+
+@app.post("/api/export/pdf")
+def export_pdf(req: ConsolidateRequest):
+    data = _make_pdf(req)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=konsolidasi.pdf"},
+    )
