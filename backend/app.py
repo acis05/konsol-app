@@ -106,7 +106,6 @@ ID_MONTHS = {
 def detect_period_from_textlines(lines: List[str]) -> Dict[str, Optional[str]]:
     head = " \n ".join(lines[:80]).lower()
 
-    # "Per Tgl. 31 Des 2025" / "Per 31 Desember 2025"
     m1 = re.search(r"\bper(?:\s+tgl\.?)?\s+(\d{1,2})\s+([a-zA-Z]{3,9})\s+(\d{4})\b", head)
     if m1:
         d = int(m1.group(1))
@@ -117,7 +116,6 @@ def detect_period_from_textlines(lines: List[str]) -> Dict[str, Optional[str]]:
             label = f"Per {d} {m1.group(2)} {y}"
             return {"label": label, "as_of": as_of}
 
-    # "Per 31/12/2025" or "Per 31-12-2025"
     m2 = re.search(r"\bper\s+(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b", head)
     if m2:
         d, mon, y = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
@@ -128,7 +126,6 @@ def detect_period_from_textlines(lines: List[str]) -> Dict[str, Optional[str]]:
         except Exception:
             pass
 
-    # rentang periode "Dari 01 Des 2025 s/d 31 Des 2025" atau 01/12/2025 s.d 31/12/2025
     m3 = re.search(
         r"(dari\s+)?(\d{1,2})(?:[\/\-]|\s+)([a-zA-Z]{3,9}|\d{1,2})(?:[\/\-]|\s+)(\d{4}).{0,40}(s\.?d\.?|sampai|to|-\s*)\s*(\d{1,2})(?:[\/\-]|\s+)([a-zA-Z]{3,9}|\d{1,2})(?:[\/\-]|\s+)(\d{4})",
         head
@@ -173,7 +170,6 @@ def parse_amount_id(amount_str: str) -> Optional[int]:
 
     s = s.replace(" ", "")
 
-    # if both '.' and ',' appear, assume '.' thousands and ',' decimals
     if "." in s and "," in s:
         s = s.replace(".", "")
         s = s.split(",")[0]
@@ -203,10 +199,6 @@ def extract_lines_from_pdf(pdf_bytes: bytes) -> List[str]:
 
 
 def parse_statement_rows_from_pdf(lines: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """
-    PDF parser sederhana: hanya menangkap baris yang punya kode + amount di ujung.
-    Group/heading PDF sangat variatif, jadi ini best-effort.
-    """
     rows: List[Dict[str, Any]] = []
     warnings: List[str] = []
 
@@ -245,12 +237,10 @@ def parse_statement_rows_from_pdf(lines: List[str]) -> Tuple[List[Dict[str, Any]
             continue
 
         if is_heading(t):
-            # treat as group heading inside current_section
             if current_section:
                 if len(group_stack) >= 3:
                     group_stack = group_stack[:2] + [t]
                 else:
-                    # jika heading terlihat "level besar", reset stack
                     if any(k in up for k in ["LANCAR", "TIDAK LANCAR", "JANGKA", "ASET", "LIABILITAS", "EKUITAS"]):
                         group_stack = [current_section, t] if current_section else [t]
                     else:
@@ -308,21 +298,15 @@ def _xlsx_sheet_to_matrix(xlsx_bytes: bytes) -> List[List[Any]]:
 
 
 def _find_header_row(matrix: List[List[Any]]) -> Tuple[int, Dict[str, int]]:
-    """
-    Cari baris header yang berisi "Kode Akun", "Deskripsi", dan kolom nilai.
-    Return: (header_row_index, colmap)
-    colmap keys: code, desc, amount, parent
-    """
     def norm(x: Any) -> str:
         return (str(x).strip().lower() if x is not None else "")
 
     best = None
 
-    for i, row in enumerate(matrix[:80]):  # cari di awal file
+    for i, row in enumerate(matrix[:80]):
         norms = [norm(x) for x in row]
         if "kode akun" in norms:
             code_col = norms.index("kode akun")
-            # cari deskripsi
             desc_col = None
             for j, v in enumerate(norms):
                 if v == "deskripsi" or v == "keterangan":
@@ -331,23 +315,18 @@ def _find_header_row(matrix: List[List[Any]]) -> Tuple[int, Dict[str, int]]:
             if desc_col is None:
                 continue
 
-            # cari parent
             parent_col = None
             for j, v in enumerate(norms):
                 if v == "induk akun":
                     parent_col = j
                     break
 
-            # cari amount col: biasanya ada "nilai" atau ada string tanggal/range
             amount_col = None
-            # kandidat: kolom setelah deskripsi yang bukan kosong
             for j in range(desc_col + 1, min(desc_col + 6, len(norms))):
                 if norms[j]:
-                    # kalau header berupa "nilai" / "nilai ()" / "1 - 31 des 2025"
                     if "nilai" in norms[j] or re.search(r"\d{1,2}\s*-\s*\d{1,2}", norms[j]) or re.search(r"\d{4}", norms[j]):
                         amount_col = j
                         break
-            # fallback: cari kolom yang bertuliskan "nilai"
             if amount_col is None:
                 for j, v in enumerate(norms):
                     if "nilai" in v:
@@ -373,7 +352,6 @@ def parse_statement_rows_from_xlsx(xlsx_bytes: bytes) -> Tuple[List[Dict[str, An
     warnings: List[str] = []
     matrix = _xlsx_sheet_to_matrix(xlsx_bytes)
 
-    # period detection from top rows
     top_lines: List[str] = []
     for r in matrix[:40]:
         for v in r[:6]:
@@ -411,33 +389,26 @@ def parse_statement_rows_from_xlsx(xlsx_bytes: bytes) -> Tuple[List[Dict[str, An
         if desc and is_footer(desc):
             break
 
-        # normalize code
         code_str = ""
         if code is not None:
             code_str = str(code).strip()
-            # kadang numeric (1101.0) -> "1101"
             if re.fullmatch(r"\d+(\.0+)?", code_str):
                 code_str = str(int(float(code_str)))
 
         amt_val = None
         if amt is not None and str(amt).strip() != "":
-            # amt bisa float
             try:
                 amt_val = int(round(float(amt)))
             except Exception:
                 amt_val = parse_amount_id(str(amt))
 
-        # Row heading: code kosong, desc ada, amt kosong
         if (not code_str) and desc and (amt_val is None):
-            # section reset jika ketemu kata kunci besar
             up = desc.upper()
             if any(k in up for k in SECTION_HINTS):
                 current_section = desc
                 group_stack = [desc]
             else:
-                # sub heading
                 if current_section:
-                    # batasi level 3
                     if len(group_stack) >= 3:
                         group_stack = group_stack[:2] + [desc]
                     else:
@@ -446,7 +417,6 @@ def parse_statement_rows_from_xlsx(xlsx_bytes: bytes) -> Tuple[List[Dict[str, An
                     group_stack = [desc]
             continue
 
-        # Detail account: code ada + amount ada
         if code_str and amt_val is not None:
             gp = list(group_stack)
             if not gp and current_section:
@@ -463,7 +433,6 @@ def parse_statement_rows_from_xlsx(xlsx_bytes: bytes) -> Tuple[List[Dict[str, An
             })
             continue
 
-        # baris lain abaikan
         continue
 
     if not rows:
@@ -500,11 +469,10 @@ class PairMapping(BaseModel):
 
 
 class ConsolidateOptions(BaseModel):
-    elim_method: str = "MIN_ABS"  # MIN_ABS | STRICT_EQUAL
+    elim_method: str = "MIN_ABS"
     strict_match: bool = False
 
-    # ✅ NEW: filter tampilan (di hasil)
-    include_details: bool = True  # True = tampilkan detail akun, False = header/subtotal saja
+    include_details: bool = True
 
 
 class ConsolidateRequest(BaseModel):
@@ -521,9 +489,6 @@ def index_balances(rows: List[ParsedRow]) -> Dict[str, ParsedRow]:
 
 
 def union_accounts_meta(companies: List[CompanyPayload], statement: str) -> Dict[str, Dict[str, Any]]:
-    """
-    Return: code -> {"name":..., "group_path":[...]}
-    """
     out: Dict[str, Dict[str, Any]] = {}
     for c in companies:
         rlist = c.bs_rows if statement == "BS" else c.is_rows
@@ -544,6 +509,19 @@ def build_company_amount_map(companies: List[CompanyPayload], statement: str) ->
             res.setdefault(r.account_code, {})
             res[r.account_code][c.company_name] = res[r.account_code].get(c.company_name, 0) + int(r.amount)
     return res
+
+
+def _norm_label(s: str) -> str:
+    s = (s or "").strip().upper()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _sum_dicts(a: Dict[str, int], b: Dict[str, int]) -> Dict[str, int]:
+    out = dict(a or {})
+    for k, v in (b or {}).items():
+        out[k] = out.get(k, 0) + int(v or 0)
+    return out
 
 
 def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], options: ConsolidateOptions):
@@ -615,8 +593,8 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
                 "difference": diff,
             })
 
-    def build_hier(meta: Dict[str, Dict[str, Any]], by_company: Dict[str, Dict[str, int]], elim_effect: Optional[Dict[str, int]] = None):
-        # 1) account rows
+    def build_hier(meta: Dict[str, Dict[str, Any]], by_company: Dict[str, Dict[str, int]], elim_effect: Optional[Dict[str, int]] = None, statement: str = "BS"):
+        # 1) accounts list
         accounts: List[Dict[str, Any]] = []
         for code, m in sorted(meta.items(), key=lambda x: x[0]):
             name = (m.get("name") or "")
@@ -637,7 +615,7 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
                 "total_after": total_after,
             })
 
-        # 2) subtotal per group_path prefix
+        # 2) group_totals by prefix
         group_totals: Dict[Tuple[str, ...], Dict[str, Any]] = {}
 
         def add_to_group(key: Tuple[str, ...], label: str, acc: Dict[str, Any]):
@@ -666,19 +644,97 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
                 key = tuple(gp[:i])
                 add_to_group(key, gp[i - 1], acc)
 
-        # 3) output ordered by group then code
+        # 3) total labels mapping (based on group label)
+        # NOTE: we match by normalized label
+        if statement == "BS":
+            want_group_totals = {
+                "ASET LANCAR": "Total Aktiva Lancar",
+                "AKTIVA LANCAR": "Total Aktiva Lancar",
+                "ASSET LANCAR": "Total Aktiva Lancar",
+
+                "ASET TETAP": "Total Aktiva Tetap",
+                "AKTIVA TETAP": "Total Aktiva Tetap",
+                "ASET TIDAK LANCAR": "Total Aktiva Tetap",
+                "AKTIVA TIDAK LANCAR": "Total Aktiva Tetap",
+                "ASET NON LANCAR": "Total Aktiva Tetap",
+
+                "LIABILITAS JANGKA PENDEK": "Total Liabilitas Jangka Pendek",
+                "KEWAJIBAN JANGKA PENDEK": "Total Liabilitas Jangka Pendek",
+
+                "LIABILITAS JANGKA PANJANG": "Total Liabilitas Jangka Panjang",
+                "KEWAJIBAN JANGKA PANJANG": "Total Liabilitas Jangka Panjang",
+
+                "EKUITAS": "Total Ekuitas",
+            }
+        else:
+            want_group_totals = {
+                "PENDAPATAN": "Total Pendapatan",
+                "PENJUALAN": "Total Pendapatan",
+
+                "HARGA POKOK PENJUALAN": "Total Harga Pokok Penjualan",
+                "HPP": "Total Harga Pokok Penjualan",
+
+                "BEBAN OPERASIONAL": "Total Beban Operasional",
+                "BEBAN USAHA": "Total Beban Operasional",
+
+                "PENDAPATAN DI LUAR USAHA": "Total Pendapatan Diluar Usaha",
+                "PENDAPATAN DILUAR USAHA": "Total Pendapatan Diluar Usaha",
+                "PENDAPATAN LAIN-LAIN": "Total Pendapatan Diluar Usaha",
+                "PENDAPATAN LAIN LAIN": "Total Pendapatan Diluar Usaha",
+
+                "BEBAN DI LUAR USAHA": "Total Beban Diluar Usaha",
+                "BEBAN DILUAR USAHA": "Total Beban Diluar Usaha",
+                "BEBAN LAIN-LAIN": "Total Beban Diluar Usaha",
+                "BEBAN LAIN LAIN": "Total Beban Diluar Usaha",
+            }
+
+        def make_total_row(label: str, level: int, g: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "type": "TOTAL",
+                "level": int(level),
+                "label": label,
+                "by_company": dict(g.get("by_company") or {}),
+                "elimination": int(g.get("elimination") or 0),
+                "total_after": int(g.get("total_after") or 0),
+            }
+
+        # 4) emit in order: open group rows, optional accounts, then close groups with TOTAL lines
         accounts_sorted = sorted(accounts, key=lambda a: ((a.get("group_path") or []), a.get("account_code") or ""))
 
         out: List[Dict[str, Any]] = []
-        emitted: set[Tuple[str, ...]] = set()
+        emitted_open: set[Tuple[str, ...]] = set()
+        open_stack: List[Tuple[str, ...]] = []
+
+        def close_groups_until(common_len: int):
+            # close from deepest to common_len
+            while len(open_stack) > common_len:
+                key = open_stack.pop()
+                g = group_totals.get(key)
+                if not g:
+                    continue
+                lbl = _norm_label(g.get("label", ""))
+                total_name = want_group_totals.get(lbl)
+                if total_name:
+                    out.append(make_total_row(total_name, len(key), g))
 
         for acc in accounts_sorted:
-            gp = acc.get("group_path") or []
+            gp: List[str] = acc.get("group_path") or []
+            keys = [tuple(gp[:i]) for i in range(1, len(gp) + 1)]
 
-            # emit group rows for prefixes not emitted yet
-            for i in range(1, len(gp) + 1):
-                key = tuple(gp[:i])
-                if key not in emitted:
+            # compute common prefix length between current open_stack and new keys
+            common = 0
+            for i in range(min(len(open_stack), len(keys))):
+                if open_stack[i] == keys[i]:
+                    common += 1
+                else:
+                    break
+
+            close_groups_until(common)
+
+            # open any new groups
+            for i in range(common, len(keys)):
+                key = keys[i]
+                if key not in emitted_open:
                     g = group_totals.get(key)
                     if g:
                         out.append({
@@ -689,16 +745,149 @@ def consolidate(companies: List[CompanyPayload], mappings: List[PairMapping], op
                             "elimination": g["elimination"],
                             "total_after": g["total_after"],
                         })
-                    emitted.add(key)
+                    emitted_open.add(key)
+                # ensure stack aligned
+                if len(open_stack) <= i:
+                    open_stack.append(key)
 
             if options.include_details:
                 out.append(acc)
 
+        close_groups_until(0)
+
+        # 5) compute overall totals (BS + IS formulas)
+        # helpers to grab totals by desired label name if we already emitted it
+        def find_total_value(label_text: str) -> Optional[Dict[str, Any]]:
+            for r in reversed(out):
+                if r.get("type") == "TOTAL" and _norm_label(r.get("label", "")) == _norm_label(label_text):
+                    return r
+            return None
+
+        # compute from group_totals (fallback)
+        def group_total_by_label(label_candidates: List[str]) -> Optional[Dict[str, Any]]:
+            cset = {_norm_label(x) for x in label_candidates}
+            # choose the deepest matching group key to avoid overly broad
+            best_key = None
+            for key, g in group_totals.items():
+                if _norm_label(g.get("label", "")) in cset:
+                    if best_key is None or len(key) > len(best_key):
+                        best_key = key
+            if best_key is None:
+                return None
+            return group_totals.get(best_key)
+
+        def make_formula_total(label: str, level: int, byc: Dict[str, int], elim: int, total_after: int) -> Dict[str, Any]:
+            return {
+                "type": "TOTAL",
+                "level": int(level),
+                "label": label,
+                "by_company": dict(byc or {}),
+                "elimination": int(elim or 0),
+                "total_after": int(total_after or 0),
+            }
+
+        if statement == "BS":
+            # Total Aktiva = total ASET/AKTIVA top-level if exists, else sum of all accounts
+            g_aset = group_total_by_label(["ASET", "AKTIVA", "ASSET"])
+            if g_aset:
+                out.append(make_total_row("Total Aktiva", 1, g_aset))
+
+            g_liab = group_total_by_label(["LIABILITAS", "KEWAJIBAN"])
+            if g_liab:
+                out.append(make_total_row("Total Liabilitas", 1, g_liab))
+
+            g_ekuitas = group_total_by_label(["EKUITAS"])
+            if g_ekuitas:
+                out.append(make_total_row("Total Ekuitas", 1, g_ekuitas))
+
+            # Total Passiva = Liabilitas + Ekuitas
+            if g_liab and g_ekuitas:
+                byc = _sum_dicts(g_liab.get("by_company") or {}, g_ekuitas.get("by_company") or {})
+                elim = int(g_liab.get("elimination") or 0) + int(g_ekuitas.get("elimination") or 0)
+                total_after = int(g_liab.get("total_after") or 0) + int(g_ekuitas.get("total_after") or 0)
+                out.append(make_formula_total("Total Passiva", 1, byc, elim, total_after))
+
+        else:
+            # IS formulas
+            t_pend = find_total_value("Total Pendapatan")
+            if not t_pend:
+                g = group_total_by_label(["PENDAPATAN", "PENJUALAN"])
+                if g:
+                    t_pend = make_total_row("Total Pendapatan", 1, g)
+                    out.append(t_pend)
+
+            t_hpp = find_total_value("Total Harga Pokok Penjualan")
+            if not t_hpp:
+                g = group_total_by_label(["HARGA POKOK PENJUALAN", "HPP"])
+                if g:
+                    t_hpp = make_total_row("Total Harga Pokok Penjualan", 1, g)
+                    out.append(t_hpp)
+
+            # Laba Kotor = Pendapatan - HPP
+            if t_pend and t_hpp:
+                byc = {}
+                for k in set((t_pend.get("by_company") or {}).keys()) | set((t_hpp.get("by_company") or {}).keys()):
+                    byc[k] = int((t_pend.get("by_company") or {}).get(k, 0)) - int((t_hpp.get("by_company") or {}).get(k, 0))
+                elim = int(t_pend.get("elimination") or 0) - int(t_hpp.get("elimination") or 0)
+                total_after = int(t_pend.get("total_after") or 0) - int(t_hpp.get("total_after") or 0)
+                out.append(make_formula_total("Laba Kotor", 1, byc, elim, total_after))
+
+            t_bop = find_total_value("Total Beban Operasional")
+            if not t_bop:
+                g = group_total_by_label(["BEBAN OPERASIONAL", "BEBAN USAHA"])
+                if g:
+                    t_bop = make_total_row("Total Beban Operasional", 1, g)
+                    out.append(t_bop)
+
+            # Laba Operasional = Laba Kotor - Beban Operasional
+            t_lk = find_total_value("Laba Kotor")
+            if t_lk and t_bop:
+                byc = {}
+                for k in set((t_lk.get("by_company") or {}).keys()) | set((t_bop.get("by_company") or {}).keys()):
+                    byc[k] = int((t_lk.get("by_company") or {}).get(k, 0)) - int((t_bop.get("by_company") or {}).get(k, 0))
+                elim = int(t_lk.get("elimination") or 0) - int(t_bop.get("elimination") or 0)
+                total_after = int(t_lk.get("total_after") or 0) - int(t_bop.get("total_after") or 0)
+                out.append(make_formula_total("Laba Operasional", 1, byc, elim, total_after))
+
+            t_pdu = find_total_value("Total Pendapatan Diluar Usaha")
+            if not t_pdu:
+                g = group_total_by_label(["PENDAPATAN DI LUAR USAHA", "PENDAPATAN DILUAR USAHA", "PENDAPATAN LAIN-LAIN", "PENDAPATAN LAIN LAIN"])
+                if g:
+                    t_pdu = make_total_row("Total Pendapatan Diluar Usaha", 1, g)
+                    out.append(t_pdu)
+
+            t_bdu = find_total_value("Total Beban Diluar Usaha")
+            if not t_bdu:
+                g = group_total_by_label(["BEBAN DI LUAR USAHA", "BEBAN DILUAR USAHA", "BEBAN LAIN-LAIN", "BEBAN LAIN LAIN"])
+                if g:
+                    t_bdu = make_total_row("Total Beban Diluar Usaha", 1, g)
+                    out.append(t_bdu)
+
+            # Laba Bersih = Laba Operasional + Pendapatan Luar - Beban Luar
+            t_lo = find_total_value("Laba Operasional")
+            if t_lo:
+                byc = dict(t_lo.get("by_company") or {})
+                elim = int(t_lo.get("elimination") or 0)
+                total_after = int(t_lo.get("total_after") or 0)
+
+                if t_pdu:
+                    byc = _sum_dicts(byc, t_pdu.get("by_company") or {})
+                    elim += int(t_pdu.get("elimination") or 0)
+                    total_after += int(t_pdu.get("total_after") or 0)
+
+                if t_bdu:
+                    for k, v in (t_bdu.get("by_company") or {}).items():
+                        byc[k] = byc.get(k, 0) - int(v or 0)
+                    elim -= int(t_bdu.get("elimination") or 0)
+                    total_after -= int(t_bdu.get("total_after") or 0)
+
+                out.append(make_formula_total("Laba Bersih", 1, byc, elim, total_after))
+
         return out
 
     return {
-        "bs_comparison": build_hier(bs_meta, bs_by_company, elim_effect_bs),
-        "is_comparison": build_hier(is_meta, is_by_company, None),
+        "bs_comparison": build_hier(bs_meta, bs_by_company, elim_effect_bs, statement="BS"),
+        "is_comparison": build_hier(is_meta, is_by_company, None, statement="IS"),
         "elimination_journal": elimination_journal,
         "unreconciled": unreconciled,
     }
@@ -718,7 +907,6 @@ async def api_parse(
     filename = (file.filename or "").lower()
     ctype = (file.content_type or "").lower()
 
-    # Try Excel first if xlsx
     if filename.endswith(".xlsx") or "spreadsheet" in ctype or "excel" in ctype:
         try:
             rows, warnings, detected = parse_statement_rows_from_xlsx(raw)
@@ -732,10 +920,8 @@ async def api_parse(
                 "source_type": "XLSX",
             })
         except Exception as e:
-            # fallback: if Excel parse fails, return clear error
             raise HTTPException(status_code=400, detail=f"Gagal parse Excel: {e}")
 
-    # PDF fallback
     try:
         lines = extract_lines_from_pdf(raw)
         detected = detect_period_from_textlines(lines)
@@ -865,7 +1051,6 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
         headers = ["Level", "Tipe", "Kode", "Nama Akun"] + companies + ["Eliminasi", "Total Konsol"]
         ws.append(headers)
 
-        # header style
         for col in range(1, len(headers) + 1):
             ws.cell(row=1, column=col).font = Font(bold=True)
             ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
@@ -875,7 +1060,6 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
             level = int(r.get("level", 1) or 1)
             code = r.get("account_code", "") if rtype == "ACCOUNT" else ""
             name = r.get("account_name", "") if rtype == "ACCOUNT" else (r.get("label", "") or "")
-            # indent name
             name = ("  " * max(0, level - 1)) + name
 
             byc = r.get("by_company", {}) or {}
@@ -886,13 +1070,10 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
             line.append(int(r.get("total_after", 0) or 0))
             ws.append(line)
 
-        # align numbers right
-        # numbers start after: Level,Tipe,Kode,Nama => col 5
         for row in range(2, ws.max_row + 1):
             for col in range(5, len(headers) + 1):
                 ws.cell(row=row, column=col).alignment = Alignment(horizontal="right")
 
-        # widths
         widths = [8, 10, 14, 50] + [18] * len(companies) + [16, 18]
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
@@ -903,7 +1084,6 @@ def _make_excel(req: ConsolidateRequest) -> bytes:
     add_sheet("Neraca_Konsol", result.get("bs_comparison", []))
     add_sheet("LabaRugi_Konsol", result.get("is_comparison", []))
 
-    # JE sheet
     ws = wb.create_sheet("Jurnal_Eliminasi")
     ws.append(["Pair", "DR", "CR", "Elim", "Selisih", "Status"])
     for col in range(1, 7):
@@ -986,10 +1166,9 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
             rtype = r.get("type", "ACCOUNT")
             level = int(r.get("level", 1) or 1)
 
-            if rtype == "GROUP":
+            if rtype in ("GROUP", "TOTAL"):
                 code = ""
                 name = r.get("label", "") or ""
-                # indent group
                 name = ("&nbsp;" * 2 * max(0, level - 1)) + f"<b>{name}</b>"
                 name_cell = Paragraph(name, normal)
             else:
@@ -1013,10 +1192,12 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
         st.add("ALIGN", (0, 0), (1, -1), "LEFT")
         st.add("ALIGN", (2, 0), (-1, -1), "RIGHT")
 
-        # Make group rows slightly tinted (best-effort)
         for i in range(1, len(data)):
             if rows[i - 1].get("type") == "GROUP":
                 st.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#fff3ea"))
+            if rows[i - 1].get("type") == "TOTAL":
+                st.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#fff0d9"))
+                st.add("LINEABOVE", (0, i), (-1, i), 1, colors.HexColor("#f59e0b"))
         tbl.setStyle(st)
 
         story_part.append(tbl)
@@ -1028,7 +1209,6 @@ def _make_pdf(req: ConsolidateRequest) -> bytes:
     story += build_table("Laba/Rugi Konsolidasi (Komparasi)", result.get("is_comparison", []))
     story.append(PageBreak())
 
-    # JE
     story.append(Paragraph("Jurnal Eliminasi", title_style))
     story.append(Spacer(1, 6))
 
